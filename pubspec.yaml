@@ -3,6 +3,12 @@ description: Offline mesh location & messaging app
 publish_to: 'none'
 version: 1.0.0+1
 
+flutter_map_tile_caching: ^9.1.1
+flutter_map_cache: ^1.2.0
+dio: ^5.4.0
+dio_cache_interceptor: ^3.5.0
+dio_cache_interceptor_hive_store: ^3.2.2
+
 environment:
   sdk: '^3.11.0'
 
@@ -29,6 +35,11 @@ dependencies:
   # State management & utils
   provider: ^6.1.0
   uuid: ^4.3.3
+
+  # Notifications
+  flutter_local_notifications: ^17.0.0
+
+  shared_preferences: ^2.3.0
 
 dev_dependencies:
   flutter_test:

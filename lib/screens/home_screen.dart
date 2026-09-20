@@ -5,7 +5,7 @@ import '../services/map_service.dart';
 import '../models/packet.dart';
 import 'chat_screen.dart';
 import 'map_screen.dart';
-
+import '../models/peer.dart';
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -19,15 +19,13 @@ class _HomeScreenState extends State<HomeScreen> {
   double? _myLat, _myLng;
   bool _isSending = false;
   String _status = 'IDLE';
-  final Map<String, List<double>> _peerLocations = {};
   int _peerCount = 0;
 
   @override
   void initState() {
     super.initState();
     _listenForPeers();
-    _listenForLocations();
-  }
+      }
 
   void _listenForPeers() {
     _mesh.peersStream.listen((peers) {
@@ -35,43 +33,182 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _listenForLocations() {
-    _mesh.locationStream.listen((packet) {
-      final coords = packet.parseLocation();
-      if (coords != null) {
-        setState(() {
-          _peerLocations[packet.senderId] = coords;
-          _status = 'Received location from ${packet.senderId}';
-        });
+  
+  void _showSendToFriendDialog() {
+  final friends = _mesh.peers.values
+      .where((p) => p.status == PeerStatus.friend)
+      .toList();
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: const Color(0xFF141928),
-              content: Text(
-                '📍 ${packet.senderId}: ${coords[0].toStringAsFixed(4)}, ${coords[1].toStringAsFixed(4)}',
-                style: const TextStyle(color: Color(0xFF00FF88)),
+  if (friends.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Color(0xFF141928),
+        content: Text(
+          'No friends yet. Connect with someone in the Nearby tab first.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      ),
+    );
+    return;
+  }
+
+  // Track selected friends
+  final Set<String> selected = {};
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: const Color(0xFF141928),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => StatefulBuilder(
+      builder: (context, setSheetState) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'SEND TO FRIENDS',
+              style: TextStyle(
+                color: Color(0xFF00FF88),
+                fontSize: 13,
+                letterSpacing: 3,
+                fontWeight: FontWeight.bold,
               ),
-              action: SnackBarAction(
-                label: 'VIEW MAP',
-                textColor: const Color(0xFF00FF88),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MapScreen(
-                      latitude: coords[0],
-                      longitude: coords[1],
-                      peerId: packet.senderId,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${_myLat!.toStringAsFixed(6)}, ${_myLng!.toStringAsFixed(6)}',
+              style: const TextStyle(
+                color: Colors.white38,
+                fontSize: 11,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 20),
+            ...friends.map((friend) => GestureDetector(
+                  onTap: () {
+                    setSheetState(() {
+                      if (selected.contains(friend.id)) {
+                        selected.remove(friend.id);
+                      } else {
+                        selected.add(friend.id);
+                      }
+                    });
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: selected.contains(friend.id)
+                          ? const Color(0xFF00FF88).withOpacity(0.1)
+                          : const Color(0xFF0A0E1A),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: selected.contains(friend.id)
+                            ? const Color(0xFF00FF88)
+                            : const Color(0xFF00FF88).withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00FF88).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                                color: const Color(0xFF00FF88), width: 1),
+                          ),
+                          child: Center(
+                            child: Text(
+                              friend.name.substring(0, 1).toUpperCase(),
+                              style: const TextStyle(
+                                color: Color(0xFF00FF88),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Text(
+                          friend.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        Icon(
+                          selected.contains(friend.id)
+                              ? Icons.check_circle
+                              : Icons.circle_outlined,
+                          color: selected.contains(friend.id)
+                              ? const Color(0xFF00FF88)
+                              : Colors.white24,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                )),
+            const SizedBox(height: 12),
+            // Send button
+            GestureDetector(
+              onTap: selected.isEmpty
+                  ? null
+                  : () async {
+                      Navigator.pop(context);
+                      setState(() {
+                        _isSending = true;
+                        _status = 'Sending to ${selected.length} friend(s)...';
+                      });
+                      for (final friendId in selected) {
+                        await _mesh.broadcastLocation(
+                          _myLat!,
+                          _myLng!,
+                          targetId: friendId,
+                        );
+                      }
+                      setState(() {
+                        _isSending = false;
+                        _status = 'Location sent to ${selected.length} friend(s) ✓';
+                      });
+                    },
+              child: Container(
+                width: double.infinity,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: selected.isEmpty
+                      ? const Color(0xFF00FF88).withOpacity(0.3)
+                      : const Color(0xFF00FF88),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    selected.isEmpty
+                        ? 'SELECT FRIENDS'
+                        : 'SEND TO ${selected.length} FRIEND${selected.length > 1 ? 'S' : ''}',
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                      fontSize: 13,
                     ),
                   ),
                 ),
               ),
             ),
-          );
-        }
-      }
-    });
-  }
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 
   Future<void> _getAndBroadcastLocation() async {
     setState(() {
@@ -265,65 +402,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
 
               // ── Peer Locations List ───────────────────────────────
-              if (_peerLocations.isNotEmpty) ...[
-                const Text(
-                  'RECEIVED LOCATIONS',
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    letterSpacing: 3,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ..._peerLocations.entries.map((entry) => GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => MapScreen(
-                            latitude: entry.value[0],
-                            longitude: entry.value[1],
-                            peerId: entry.key,
-                          ),
-                        ),
-                      ),
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF141928),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                              color: const Color(0xFF0088FF).withOpacity(0.3)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.person_pin_circle,
-                                color: Color(0xFF0088FF), size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(entry.key,
-                                      style: const TextStyle(
-                                          color: Color(0xFF0088FF),
-                                          fontFamily: 'monospace',
-                                          fontSize: 12)),
-                                  Text(
-                                    '${entry.value[0].toStringAsFixed(4)}, ${entry.value[1].toStringAsFixed(4)}',
-                                    style: const TextStyle(
-                                        color: Colors.white54, fontSize: 11),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Icon(Icons.arrow_forward_ios,
-                                color: Colors.white24, size: 14),
-                          ],
-                        ),
-                      ),
-                    )),
-              ],
+              
 
               const Spacer(),
 
@@ -395,49 +474,37 @@ Column(
 
     // Row 2 — Send Coordinates button (only shows when location is fetched)
     if (_myLat != null)
-      GestureDetector(
-        onTap: _isSending
-            ? null
-            : () async {
-                setState(() {
-                  _isSending = true;
-                  _status = 'Sending coordinates...';
-                });
-                await _mesh.broadcastLocation(_myLat!, _myLng!);
-                setState(() {
-                  _isSending = false;
-                  _status = 'Coordinates sent ✓';
-                });
-              },
-        child: Container(
-          width: double.infinity,
-          height: 56,
-          decoration: BoxDecoration(
-            color: const Color(0xFF141928),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: const Color(0xFF00FF88).withOpacity(0.5),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.send_to_mobile,
-                  color: Color(0xFF00FF88), size: 18),
-              const SizedBox(width: 10),
-              Text(
-                'SEND MY COORDINATES  ${_myLat!.toStringAsFixed(4)}, ${_myLng!.toStringAsFixed(4)}',
-                style: const TextStyle(
-                  color: Color(0xFF00FF88),
-                  fontSize: 12,
-                  letterSpacing: 1,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
+  GestureDetector(
+    onTap: _isSending ? null : () => _showSendToFriendDialog(),
+    child: Container(
+      width: double.infinity,
+      height: 56,
+      decoration: BoxDecoration(
+        color: const Color(0xFF141928),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF00FF88).withOpacity(0.5),
         ),
       ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.send_to_mobile,
+              color: Color(0xFF00FF88), size: 18),
+          const SizedBox(width: 10),
+          Text(
+            'SEND COORDINATES TO FRIEND',
+            style: const TextStyle(
+              color: Color(0xFF00FF88),
+              fontSize: 12,
+              letterSpacing: 1,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
   ],
 ),
 

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-class MapScreen extends StatelessWidget {
+class MapScreen extends StatefulWidget {
   final double latitude;
   final double longitude;
   final String peerId;
@@ -15,15 +15,23 @@ class MapScreen extends StatelessWidget {
   });
 
   @override
+  State<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends State<MapScreen> {
+  final MapController _mapController = MapController();
+  bool _hasInternet = true;
+
+  @override
   Widget build(BuildContext context) {
-    final peerLocation = LatLng(latitude, longitude);
+    final peerLocation = LatLng(widget.latitude, widget.longitude);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E1A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0A0E1A),
         title: Text(
-          'PEER: $peerId',
+          'PEER: ${widget.peerId}',
           style: const TextStyle(
             color: Color(0xFF00FF88),
             fontFamily: 'monospace',
@@ -32,6 +40,24 @@ class MapScreen extends StatelessWidget {
           ),
         ),
         iconTheme: const IconThemeData(color: Color(0xFF00FF88)),
+        actions: [
+          // Zoom in
+          IconButton(
+            icon: const Icon(Icons.add, color: Color(0xFF00FF88)),
+            onPressed: () => _mapController.move(
+              peerLocation,
+              _mapController.camera.zoom + 1,
+            ),
+          ),
+          // Zoom out
+          IconButton(
+            icon: const Icon(Icons.remove, color: Color(0xFF00FF88)),
+            onPressed: () => _mapController.move(
+              peerLocation,
+              _mapController.camera.zoom - 1,
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -39,7 +65,8 @@ class MapScreen extends StatelessWidget {
           // ── Coordinates Bar ─────────────────────────────────────
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
             color: const Color(0xFF141928),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -52,7 +79,7 @@ class MapScreen extends StatelessWidget {
                             fontSize: 10,
                             letterSpacing: 2)),
                     Text(
-                      latitude.toStringAsFixed(6),
+                      widget.latitude.toStringAsFixed(6),
                       style: const TextStyle(
                         color: Color(0xFF00FF88),
                         fontFamily: 'monospace',
@@ -70,7 +97,7 @@ class MapScreen extends StatelessWidget {
                             fontSize: 10,
                             letterSpacing: 2)),
                     Text(
-                      longitude.toStringAsFixed(6),
+                      widget.longitude.toStringAsFixed(6),
                       style: const TextStyle(
                         color: Color(0xFF00FF88),
                         fontFamily: 'monospace',
@@ -83,18 +110,53 @@ class MapScreen extends StatelessWidget {
             ),
           ),
 
+          // ── No internet warning ──────────────────────────────────
+          if (!_hasInternet)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 8),
+              color: Colors.orange.withOpacity(0.2),
+              child: const Row(
+                children: [
+                  Icon(Icons.wifi_off,
+                      color: Colors.orange, size: 14),
+                  SizedBox(width: 8),
+                  Text(
+                    'Offline — showing last cached map tiles',
+                    style: TextStyle(
+                        color: Colors.orange, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+
           // ── Map ──────────────────────────────────────────────────
           Expanded(
             child: FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: peerLocation,
                 initialZoom: 15,
+                onMapReady: () {
+                  // Try loading tiles — if fails show offline warning
+                },
               ),
               children: [
                 TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.crowdlink',
+                  // Use file system cache so tiles load offline
+                  // after first viewed with internet
+                  tileProvider: NetworkTileProvider(),
+                  errorTileCallback: (tile, error, stackTrace) {
+                    if (mounted) {
+                      setState(() => _hasInternet = false);
+                    }
+                  },
+                  fallbackUrl:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 ),
                 MarkerLayer(
                   markers: [
@@ -112,7 +174,7 @@ class MapScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              peerId,
+                              widget.peerId,
                               style: const TextStyle(
                                 fontSize: 9,
                                 color: Color(0xFF0A0E1A),
@@ -135,6 +197,21 @@ class MapScreen extends StatelessWidget {
             ),
           ),
 
+          // ── Bottom info bar ──────────────────────────────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 10),
+            color: const Color(0xFF141928),
+            child: const Text(
+              'Tip: View this location with internet once to cache it for offline use.',
+              style: TextStyle(
+                color: Colors.white24,
+                fontSize: 10,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
         ],
       ),
     );

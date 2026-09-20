@@ -16,6 +16,7 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
+
     <!-- WiFi / Nearby Connections -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -25,19 +26,28 @@
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
 
-    <!-- Foreground service (keep mesh alive in background) -->
+    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <!-- Notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="CrowdLink"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-
+        <!-- Nearby Connections -->
         <service
-    android:name="com.google.android.gms.nearby.connection.NearbyConnectionsService"
-    android:exported="true" />
+            android:name="com.google.android.gms.nearby.connection.NearbyConnectionsService"
+            android:exported="true" />
+
+        <!-- Mesh foreground service to keep app alive in background -->
+        <service
+            android:name=".MeshForegroundService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

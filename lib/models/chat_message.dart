@@ -4,12 +4,14 @@ class ChatMessage {
   final String text;
   final DateTime timestamp;
   final bool isOwn;
+  bool seen;
 
-  const ChatMessage({
+  ChatMessage({
     required this.id,
     required this.senderId,
     required this.text,
     required this.timestamp,
     required this.isOwn,
+    this.seen = false,
   });
 }
