@@ -22,7 +22,7 @@ class Packet {
     required this.payload,
     this.targetId,
     this.hopCount = 0,
-    this.maxHops = 5,
+    this.maxHops = 10,
     required this.timestamp,
   });
 
