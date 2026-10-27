@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/mesh_service.dart';
 import '../services/storage_service.dart';
 import '../models/peer.dart';
@@ -20,76 +22,81 @@ class _DmScreenState extends State<DmScreen> {
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   bool _loading = true;
+  StreamSubscription? _messageSub;
+  StreamSubscription? _seenSub;
 
   @override
   void initState() {
     super.initState();
     _loadHistory();
-    _listenForMessages();
+    _subscribeToMessages();
   }
 
-  // ── Load stored messages ──────────────────────────────────────────────
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _subscribeToMessages();
+  }
+
+  void _subscribeToMessages() {
+    _messageSub?.cancel();
+    _seenSub?.cancel();
+
+    _messageSub = _mesh.messageStream.listen((packet) {
+      if (packet.senderId == widget.peer.id ||
+          packet.targetId == widget.peer.id) {
+        final text = packet.parseMessage();
+        if (text != null && mounted) {
+          final alreadyExists = _messages.any((m) => m.id == packet.id);
+          if (!alreadyExists) {
+            final msg = ChatMessage(
+              id: packet.id,
+              senderId: packet.senderId,
+              text: text,
+              timestamp: packet.timestamp,
+              isOwn: packet.senderId == _mesh.deviceId,
+              seen: true,
+            );
+            if (packet.senderId != _mesh.deviceId) {
+              _storage.markAllSeen(widget.peer.id);
+            }
+            setState(() => _messages.add(msg));
+            _scrollToBottom();
+          }
+        }
+      }
+    });
+
+    _seenSub = _mesh.seenStream.listen((messageId) {
+      if (mounted) {
+        setState(() {
+          for (final msg in _messages) {
+            if (msg.id == messageId && msg.isOwn) {
+              msg.seen = true;
+            }
+          }
+        });
+      }
+    });
+  }
+
   Future<void> _loadHistory() async {
     final msgs = await _storage.loadMessages(widget.peer.id);
     await _storage.markAllSeen(widget.peer.id);
     if (mounted) {
       setState(() {
+        _messages.clear();
         _messages.addAll(msgs);
         _loading = false;
       });
       _scrollToBottom();
     }
-    // Tell the sender their messages were seen
     for (final msg in msgs) {
       if (!msg.isOwn && !msg.seen) {
         await _mesh.sendSeen(msg.senderId, msg.id);
       }
     }
   }
-
-  // ── Listen for new incoming messages ──────────────────────────────────
-  void _listenForMessages() {
-  _mesh.messageStream.listen((packet) {
-    if (packet.senderId == widget.peer.id ||
-        packet.targetId == widget.peer.id) {
-      final text = packet.parseMessage();
-      if (text != null && mounted) {
-        // Check if message already exists (saved by mesh service)
-        final alreadyExists = _messages.any((m) => m.id == packet.id);
-        if (!alreadyExists) {
-          final msg = ChatMessage(
-            id: packet.id,
-            senderId: packet.senderId,
-            text: text,
-            timestamp: packet.timestamp,
-            isOwn: packet.senderId == _mesh.deviceId,
-            seen: true,
-          );
-          // Only save if it's incoming (mesh service already saved it,
-          // but mark as seen since chat is open)
-          if (packet.senderId != _mesh.deviceId) {
-            _storage.markAllSeen(widget.peer.id);
-          }
-          setState(() => _messages.add(msg));
-          _scrollToBottom();
-        }
-      }
-    }
-  });
-
-  // Listen for seen receipts
-  _mesh.seenStream.listen((messageId) {
-    if (mounted) {
-      setState(() {
-        for (final msg in _messages) {
-          if (msg.id == messageId && msg.isOwn) {
-            msg.seen = true;
-          }
-        }
-      });
-    }
-  });
-}
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -116,7 +123,7 @@ class _DmScreenState extends State<DmScreen> {
       text: text,
       timestamp: DateTime.now(),
       isOwn: true,
-      seen: false, // not yet seen by friend
+      seen: false,
     );
 
     await _storage.saveMessage(widget.peer.id, msg);
@@ -126,6 +133,8 @@ class _DmScreenState extends State<DmScreen> {
 
   @override
   void dispose() {
+    _messageSub?.cancel();
+    _seenSub?.cancel();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -177,7 +186,7 @@ class _DmScreenState extends State<DmScreen> {
       body: Column(
         children: [
 
-          // ── Messages ─────────────────────────────────────────────
+          // ── Messages ──────────────────────────────────────────
           Expanded(
             child: _loading
                 ? const Center(
@@ -217,7 +226,7 @@ class _DmScreenState extends State<DmScreen> {
                       ),
           ),
 
-          // ── Input ─────────────────────────────────────────────────
+          // ── Input ─────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
             decoration: const BoxDecoration(
@@ -291,8 +300,8 @@ class _MessageBubble extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.72),
         decoration: BoxDecoration(
           color: msg.isOwn
               ? const Color(0xFF00FF88).withOpacity(0.15)
@@ -305,10 +314,11 @@ class _MessageBubble extends StatelessWidget {
           ),
         ),
         child: Column(
-          crossAxisAlignment:
-              msg.isOwn ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: msg.isOwn
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
-            // ── Location bubble ───────────────────────────────────
+            // ── Location bubble ──────────────────────────────
             if (_isLocation) ...[
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -340,16 +350,30 @@ class _MessageBubble extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MapScreen(
-                      latitude: _coords![0],
-                      longitude: _coords![1],
-                      peerId: msg.senderId,
-                    ),
-                  ),
-                ),
+                onTap: () async {
+                  Position? myPos;
+                  try {
+                    myPos = await Geolocator.getCurrentPosition(
+                      desiredAccuracy: LocationAccuracy.high,
+                    );
+                  } catch (e) {
+                    myPos = null;
+                  }
+                  if (context.mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MapScreen(
+                          latitude: _coords![0],
+                          longitude: _coords![1],
+                          peerId: msg.senderId,
+                          myLatitude: myPos?.latitude,
+                          myLongitude: myPos?.longitude,
+                        ),
+                      ),
+                    );
+                  }
+                },
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 6),
@@ -390,17 +414,17 @@ class _MessageBubble extends StatelessWidget {
                 ),
               ),
             ] else ...[
-              // ── Normal text message ───────────────────────────
+              // ── Normal text message ───────────────────────
               Text(
                 msg.text,
-                style:
-                    const TextStyle(color: Colors.white, fontSize: 14),
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 14),
               ),
             ],
 
             const SizedBox(height: 4),
 
-            // ── Timestamp + tick ──────────────────────────────────
+            // ── Timestamp + tick ──────────────────────────────
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [

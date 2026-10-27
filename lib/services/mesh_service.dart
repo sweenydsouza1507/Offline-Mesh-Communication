@@ -79,14 +79,32 @@ class MeshService {
   await Future.delayed(const Duration(seconds: 2));
   await _broadcastPresence();
 
-  Timer.periodic(const Duration(seconds: 10), (_) {
-    _broadcastPresence();
-  });
+  // Broadcast presence every 10 seconds
+// Presence every 5 seconds
+// Presence every 5 seconds
+Timer.periodic(const Duration(seconds: 5), (_) {
+  _broadcastPresence();
+});
 
-  Timer.periodic(const Duration(seconds: 30), (_) async {
-    await _nearby.stopDiscovery();
-    await _startDiscovery();
-  });
+// Restart discovery every 15 seconds
+Timer.periodic(const Duration(seconds: 15), (_) async {
+  await _startDiscovery();
+});
+
+// Connection health check every 15 seconds
+Timer.periodic(const Duration(seconds: 15), (_) async {
+  if (_connectedEndpoints.isEmpty) {
+    try {
+      await _nearby.stopAdvertising();
+      await _nearby.stopDiscovery();
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _startAdvertising();
+      await _startDiscovery();
+    } catch (e) {
+      print('Reconnect error: $e');
+    }
+  }
+});
 }
 
   // ── Permissions ───────────────────────────────────────────────────────
@@ -103,47 +121,58 @@ class MeshService {
 
   // ── Advertising ───────────────────────────────────────────────────────
 
-  Future<void> _startAdvertising() async {
-    try {
-      await _nearby.startAdvertising(
-        _deviceId,
-        Strategy.P2P_CLUSTER,
-        onConnectionInitiated: _onConnectionInitiated,
-        onConnectionResult: _onConnectionResult,
-        onDisconnected: _onDisconnected,
-        serviceId: _serviceId,
-      );
-    } catch (e) {
-      print('Advertising error: $e');
-    }
+ Future<void> _startAdvertising() async {
+  try {
+    await _nearby.stopAdvertising();
+  } catch (e) {
+    // Ignore stop errors
   }
-
+  await Future.delayed(const Duration(milliseconds: 300));
+  try {
+    await _nearby.startAdvertising(
+      _deviceId,
+      Strategy.P2P_CLUSTER,
+      onConnectionInitiated: _onConnectionInitiated,
+      onConnectionResult: _onConnectionResult,
+      onDisconnected: _onDisconnected,
+      serviceId: _serviceId,
+    );
+  } catch (e) {
+    print('Advertising error: $e');
+  }
+}
   // ── Discovery ─────────────────────────────────────────────────────────
-
-  Future<void> _startDiscovery() async {
-    try {
-      await _nearby.startDiscovery(
-        _deviceId,
-        Strategy.P2P_CLUSTER,
-        onEndpointFound: (endpointId, endpointName, serviceId) {
+Future<void> _startDiscovery() async {
+  try {
+    await _nearby.stopDiscovery();
+  } catch (e) {
+    // Ignore stop errors
+  }
+  await Future.delayed(const Duration(milliseconds: 300));
+  try {
+    await _nearby.startDiscovery(
+      _deviceId,
+      Strategy.P2P_CLUSTER,
+      onEndpointFound: (endpointId, endpointName, serviceId) {
+        if (!_connectedEndpoints.containsKey(endpointId)) {
           _nearby.requestConnection(
             _deviceId,
             endpointId,
             onConnectionInitiated: _onConnectionInitiated,
             onConnectionResult: _onConnectionResult,
             onDisconnected: _onDisconnected,
-          );
-        },
-        onEndpointLost: (endpointId) {
-          _connectedEndpoints.remove(endpointId);
-        },
-        serviceId: _serviceId,
-      );
-    } catch (e) {
-      print('Discovery error: $e');
-    }
+          ).catchError((e) {});
+        }
+      },
+      onEndpointLost: (endpointId) {
+        _connectedEndpoints.remove(endpointId);
+      },
+      serviceId: _serviceId,
+    );
+  } catch (e) {
+    print('Discovery error: $e');
   }
-
+}
 //seen
   Future<void> sendSeen(String targetId, String messageId) async {
   final packet = Packet.seen(
@@ -175,8 +204,15 @@ class MeshService {
   }
 
   void _onDisconnected(String endpointId) {
-    _connectedEndpoints.remove(endpointId);
-  }
+  print('DEBUG: Disconnected from $endpointId — will reconnect on next discovery');
+  _connectedEndpoints.remove(endpointId);
+  _peersController.add(Map.from(_peers));
+  // Immediately restart discovery to find and reconnect
+  Future.delayed(const Duration(seconds: 2), () async {
+    await _nearby.stopDiscovery();
+    await _startDiscovery();
+  });
+}
 
   // ── Receive & Process ─────────────────────────────────────────────────
 
